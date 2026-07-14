@@ -1,0 +1,11 @@
+services:
+  wa-ass:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: whatsapp-assistant:0.1
+    container_name: wa-ass
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
