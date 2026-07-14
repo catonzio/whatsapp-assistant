@@ -3,6 +3,7 @@ import logging
 from dotenv import load_dotenv
 from fastapi import FastAPI
 
+from .api.waha import router as waha_router
 from .api.webhook import router as webhook_router
 
 load_dotenv()
@@ -18,6 +19,7 @@ def create_app() -> FastAPI:
         root_path="/whatsapp-assistant",
     )
     app.include_router(webhook_router)
+    app.include_router(waha_router)
     return app
 
 
