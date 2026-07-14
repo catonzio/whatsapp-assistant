@@ -1,2 +1,3 @@
-def main() -> None:
-    print("Hello from whatsapp-assistant!")
+from .main import app, create_app, main
+
+__all__ = ["app", "create_app", "main"]

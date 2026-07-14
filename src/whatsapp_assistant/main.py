@@ -17,3 +17,16 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+
+def main() -> None:
+    """Console entrypoint mirroring the VS Code launch config
+    (`fastapi dev src/whatsapp_assistant/main.py --host 0.0.0.0 --port 8000`)."""
+    import uvicorn
+
+    uvicorn.run(
+        "whatsapp_assistant.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+    )
