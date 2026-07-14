@@ -7,7 +7,12 @@ authors = [
     { name = "Danilo Catone", email = "danilo.catone@tinextainnovationhub.com" }
 ]
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "fastapi[standard]>=0.139.0",
+    "httpx>=0.28.1",
+    "openai>=2.45.0",
+    "python-dotenv>=1.2.2",
+]
 
 [project.scripts]
 whatsapp-assistant = "whatsapp_assistant:main"
