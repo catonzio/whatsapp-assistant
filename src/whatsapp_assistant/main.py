@@ -11,7 +11,12 @@ logging.basicConfig(level=logging.INFO)
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="WhatsApp Assistant")
+    app = FastAPI(
+        title="WhatsApp Assistant",
+        description="A WhatsApp assistant built with FastAPI and LangChain.",
+        version="0.1.0",
+        root_path="/whatsapp-assistant",
+    )
     app.include_router(webhook_router)
     return app
 
