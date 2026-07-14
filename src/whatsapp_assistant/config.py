@@ -1,0 +1,34 @@
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """Application settings, loaded from environment / .env file."""
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    # Secrets / API credentials
+    openai_api_key: str
+    # Access token from the Meta app (WhatsApp > API Setup).
+    whatsapp_token: str
+    # The "Phone number ID" shown in the same panel (NOT the phone number itself).
+    whatsapp_phone_number_id: str
+    # Any string you choose; must match what you enter in the Meta webhook config.
+    whatsapp_verify_token: str
+
+    # Tunables (sensible defaults)
+    graph_api_version: str = "v21.0"
+    transcription_model: str = "gpt-4o-transcribe"
+    # WhatsApp text messages have a 4096-char body limit.
+    max_message_len: int = 4096
+
+    @property
+    def graph_url(self) -> str:
+        return f"https://graph.facebook.com/{self.graph_api_version}"
+
+
+@lru_cache
+def get_settings() -> Settings:
+    """Cached accessor so settings are parsed once per process."""
+    return Settings()  # type: ignore[call-arg]
