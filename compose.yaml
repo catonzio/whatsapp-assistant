@@ -6,6 +6,21 @@ services:
     image: whatsapp-assistant:0.1
     container_name: wa-ass
     ports:
-      - "8000:8000"
+      - "1000:8000"
     env_file:
       - .env
+    networks:
+      - traefik-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.whatsapp-assistant.rule=PathPrefix(`/whatsapp-assistant`)"
+      - "traefik.http.routers.whatsapp-assistant.tls=true"
+      - "traefik.http.routers.whatsapp-assistant.entrypoints=web,websecure"
+      - "traefik.http.routers.whatsapp-assistant.middlewares=whatsapp-assistant-strip"
+      - "traefik.http.middlewares.whatsapp-assistant-strip.stripprefix.prefixes=/whatsapp-assistant"
+      - "traefik.http.services.whatsapp-assistant.loadbalancer.server.port=8000"
+      - "traefik.docker.network=traefik-network"
+
+networks:
+  traefik-network:
+    external: true
