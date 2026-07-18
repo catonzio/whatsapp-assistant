@@ -23,6 +23,14 @@ class Settings(BaseSettings):
     # WhatsApp text messages have a 4096-char body limit.
     max_message_len: int = 4096
 
+    # Postgres connection for application data (items, categories, reminders,
+    # lists, users). Async driver (asyncpg) required. No default on purpose:
+    # must be set explicitly via .env, never fall back to weak credentials.
+    database_url: str
+    # Separate database, same Postgres instance, used exclusively by ADK's
+    # DatabaseSessionService (its own internal schema, not modeled by us).
+    agent_sessions_database_url: str
+
     @property
     def graph_url(self) -> str:
         return f"https://graph.facebook.com/{self.graph_api_version}"
