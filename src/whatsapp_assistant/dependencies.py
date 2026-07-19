@@ -1,6 +1,8 @@
 from functools import lru_cache
 
 from .config import get_settings
+from .services.adk_chat_service import ADKChatService, build_runner
+from .services.chat_service import ChatService
 from .services.handler import MessageHandler
 from .services.transcription import TranscriptionService
 from .services.whatsapp import WhatsAppClient
@@ -26,10 +28,17 @@ def get_transcription_service() -> TranscriptionService:
 
 
 @lru_cache
+def get_chat_service() -> ChatService:
+    settings = get_settings()
+    return ADKChatService(build_runner(settings))
+
+
+@lru_cache
 def get_message_handler() -> MessageHandler:
     settings = get_settings()
     return MessageHandler(
         whatsapp=get_whatsapp_client(),
         transcription=get_transcription_service(),
+        chat_service=get_chat_service(),
         max_message_len=settings.max_message_len,
     )
