@@ -28,7 +28,7 @@ async def chat_loop(chat_service: ChatService, user_id: str, stream: bool) -> No
     while True:
         try:
             user_input = input("You: ").strip()
-        except (EOFError, KeyboardInterrupt):
+        except EOFError, KeyboardInterrupt:
             print("\nGoodbye!")
             break
 
@@ -81,7 +81,9 @@ def run(args: Namespace) -> None:
     load_dotenv()
     settings = get_settings()
     chat_service = ADKChatService(build_runner(settings))
-    asyncio.run(chat_loop(chat_service, user_id=args.user_id, stream=not args.no_stream))
+    asyncio.run(
+        chat_loop(chat_service, user_id=args.user_id, stream=not args.no_stream)
+    )
 
 
 def run_cli() -> None:

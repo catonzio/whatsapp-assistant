@@ -26,7 +26,9 @@ def build_runner(settings: Settings) -> Runner:
     TEMPORARY: wraps `placeholder_agent.root_agent`. Will be replaced once the
     real domain agents are designed (docs/architecture.md §7, point 2).
     """
-    session_service = DatabaseSessionService(db_url=settings.agent_sessions_database_url)
+    session_service = DatabaseSessionService(
+        db_url=settings.agent_sessions_database_url
+    )
     return Runner(
         app_name=APP_NAME,
         agent=root_agent,
@@ -77,7 +79,11 @@ class ADKChatService(ChatService):
             session_id=session_id,
             new_message=content,
         ):
-            if not event.is_final_response() or not event.content or not event.content.parts:
+            if (
+                not event.is_final_response()
+                or not event.content
+                or not event.content.parts
+            ):
                 continue
             for part in event.content.parts:
                 if part.text:
