@@ -12,7 +12,7 @@ from google.adk.sessions import DatabaseSessionService
 from google.genai import types
 
 from whatsapp_assistant.agents.placeholder_agent import root_agent
-from whatsapp_assistant.config import Settings
+from whatsapp_assistant.config import Settings, get_settings
 from whatsapp_assistant.services.chat_service import ChatMessage, ChatService
 
 logger = logging.getLogger("whatsapp-assistant")
@@ -40,8 +40,8 @@ def build_runner(settings: Settings) -> Runner:
 class ADKChatService(ChatService):
     """Wraps a Google ADK `Runner`. One continuous session per user_id."""
 
-    def __init__(self, runner: Runner):
-        self._runner = runner
+    def __init__(self, runner: Runner | None = None):
+        self._runner = runner or build_runner(get_settings())
 
     @staticmethod
     def _build_content(message: ChatMessage) -> types.Content:
@@ -64,9 +64,10 @@ class ADKChatService(ChatService):
         )
         if session:
             return session
-        return await self._runner.session_service.create_session(
+        new_session = await self._runner.session_service.create_session(
             app_name=APP_NAME, user_id=user_id, session_id=session_id
         )
+        return new_session
 
     async def send_async(self, message: ChatMessage) -> str:
         session_id = message.session_id or message.user_id

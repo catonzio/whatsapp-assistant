@@ -60,11 +60,13 @@ agenti e i tool specifici del dominio condominiale**:
 
 ## 3. `ChatService` — design
 
-**Decisione chiave**: framework-agnostico tramite Template Method con un solo
-metodo realmente astratto. Le sottoclassi concrete (una per framework agentico)
-implementano solo il primitivo comune; gli altri due metodi hanno
-un'implementazione di default nella classe base, sovrascrivibile se il framework
-offre di meglio.
+**Decisione chiave**: framework-agnostico tramite Template Method con **due**
+metodi realmente astratti (`send_async` e `reset_session`) e **due** metodi con
+implementazione di default nella classe base (`send_sync`, `send_stream_async`),
+sovrascrivibile se il framework offre di meglio. Le sottoclassi concrete (una
+per framework agentico) implementano solo i due primitivi comuni.
+
+Implementato in [src/whatsapp_assistant/services/chat_service.py](../src/whatsapp_assistant/services/chat_service.py):
 
 ```python
 @dataclass
@@ -76,15 +78,25 @@ class Attachment:
 @dataclass
 class ChatMessage:
     user_id: str
-    session_id: str | None
     text: str
+    session_id: str | None = None  # None => deriva da user_id, vedi sotto
     attachments: list[Attachment] = field(default_factory=list)
 
 
 class ChatService(ABC):
     @abstractmethod
     async def send_async(self, message: ChatMessage) -> str:
-        """Unico metodo che ogni framework deve implementare."""
+        """Invia un messaggio e ritorna la risposta completa dell'agente."""
+
+    @abstractmethod
+    async def reset_session(self, user_id: str) -> None:
+        """Azzera la cronologia della conversazione per questo utente.
+
+        Astratto (non derivabile da send_async): richiede accesso interno al
+        session_service specifico del framework. Serve per non "bruciare"
+        token e degradare la qualità su una conversazione che cresce
+        indefinitamente.
+        """
 
     def send_sync(self, message: ChatMessage) -> str:
         # Default: asyncio.run(...). Uso previsto: SOLO script/tool di
@@ -98,7 +110,8 @@ class ChatService(ABC):
         yield await self.send_async(message)
 ```
 
-Prima (e per ora unica) implementazione concreta: `ADKChatService(ChatService)`,
+Prima (e per ora unica) implementazione concreta:
+[`ADKChatService(ChatService)`](../src/whatsapp_assistant/services/adk_chat_service.py),
 che wrappa un `Runner` di Google ADK e converte tra `ChatMessage`/`Attachment`
 (tipi canonici, framework-agnostic) e i tipi nativi ADK
 (`google.genai.types.Content/Part/Blob`). La conversione resta confinata dentro
@@ -107,15 +120,6 @@ questa sottoclasse — nessun tipo ADK trapela verso webhook, handler o CLI.
 Non si costruisce un secondo adapter (es. per chiamate dirette a `google-genai`)
 finché non serve davvero (YAGNI) — il contratto astratto è già pronto ad
 accoglierlo in futuro.
-
-**Revisione emersa durante lo scaffolding**: il contratto ha in realtà **due**
-metodi astratti, non uno solo. Oltre a `send_async`, anche
-`reset_session(user_id) -> None` è astratto: l'utente ha chiesto di poter
-azzerare la cronologia a piacere (per non "bruciare" token e degradare la
-qualità nel tempo su una conversazione che cresce indefinitamente), e questa
-operazione è specifica del framework (richiede accesso al `session_service`) —
-non derivabile genericamente da `send_async` come invece accade per
-`send_sync`/`send_stream_async`.
 
 **Sessione ADK — una per utente, non multi-sessione**: `ChatMessage.session_id`
 resta opzionale ma, se omesso, viene risolto in modo deterministico come
