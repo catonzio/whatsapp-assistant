@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     whatsapp_phone_number_id: str
     # Any string you choose; must match what you enter in the Meta webhook config.
     whatsapp_verify_token: str
+    # Used both by GeminiMediaUploader and, indirectly, by ADK/google-genai
+    # (which reads the GOOGLE_API_KEY env var already populated by load_dotenv()).
+    google_api_key: str
 
     # Tunables (sensible defaults)
     graph_api_version: str = "v21.0"

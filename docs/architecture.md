@@ -41,21 +41,22 @@ Componenti principali, in ordine di attraversamento di un messaggio in ingresso:
 Da `/Users/dcatone/Projects/ai/dls-chatbot/dls-chatbot`, **tutto tranne gli
 agenti e i tool specifici del dominio condominiale**:
 
-**Da portare/adattare:**
+**Portato/adattato (scaffolding completato):**
 
-- Pattern `ChatService` (rivisto, vedi §3 — non identico all'originale)
-- Interfaccia CLI per test locali in sviluppo
-- Config management (Pydantic `Settings`, path/costanti separati)
-- Setup Docker/Compose per Postgres
-- Pattern error handling per i tool (`@may_fail`-style: mai un'eccezione grezza arriva all'agente)
-- Dataclass `Attachment` condivisa tra interfacce
+- Pattern `ChatService` (rivisto, vedi §3 — non identico all'originale) → [src/whatsapp_assistant/services/chat_service.py](../src/whatsapp_assistant/services/chat_service.py)
+- `ADKChatService` + factory del `Runner` → [src/whatsapp_assistant/services/adk_chat_service.py](../src/whatsapp_assistant/services/adk_chat_service.py)
+- Interfaccia CLI per test locali in sviluppo → [src/whatsapp_assistant/cli.py](../src/whatsapp_assistant/cli.py) (comando `whatsapp-assistant-cli`)
+- Pattern error handling per i tool (`@may_fail`/`@may_fail_async`) → [src/whatsapp_assistant/agents/wrappers.py](../src/whatsapp_assistant/agents/wrappers.py)
+- Dataclass `Attachment`/`ChatMessage` condivise tra interfacce → stesso file di `chat_service.py`
+- Setup Docker/Compose per Postgres → già fatto in §4.3
 
 **Da NON portare:**
 
 - Interfaccia Telegram (bot è WhatsApp-only)
 - Agenti/tool del dominio condominiale (`whatsapp_agent`, `domostudio_agent`, `docs_agent` e relativi tool)
 - DB `agent_db.sqlite3` e schema condominiale (`Problem`, `Specialist`, ecc.)
-- Layer DB sincrono (SQLAlchemy `create_engine`) — il progetto attuale è async-first, va usato SQLAlchemy async (`asyncpg`) o SQLModel async
+- Layer DB sincrono (SQLAlchemy `create_engine`) — sostituito da SQLAlchemy async (`asyncpg`), vedi §4
+- Config management custom (path/costanti in `configs/folder.py`) — non applicabile, il progetto usa già Pydantic `Settings`/`.env`
 
 ## 3. `ChatService` — design
 
@@ -106,6 +107,30 @@ questa sottoclasse — nessun tipo ADK trapela verso webhook, handler o CLI.
 Non si costruisce un secondo adapter (es. per chiamate dirette a `google-genai`)
 finché non serve davvero (YAGNI) — il contratto astratto è già pronto ad
 accoglierlo in futuro.
+
+**Revisione emersa durante lo scaffolding**: il contratto ha in realtà **due**
+metodi astratti, non uno solo. Oltre a `send_async`, anche
+`reset_session(user_id) -> None` è astratto: l'utente ha chiesto di poter
+azzerare la cronologia a piacere (per non "bruciare" token e degradare la
+qualità nel tempo su una conversazione che cresce indefinitamente), e questa
+operazione è specifica del framework (richiede accesso al `session_service`) —
+non derivabile genericamente da `send_async` come invece accade per
+`send_sync`/`send_stream_async`.
+
+**Sessione ADK — una per utente, non multi-sessione**: `ChatMessage.session_id`
+resta opzionale ma, se omesso, viene risolto in modo deterministico come
+`session_id = user_id`. Motivo: WhatsApp non ha il concetto di "nuova
+conversazione" (è un unico thread continuo per numero di telefono), quindi non
+serve un meccanismo per scoprire/restituire un session id generato — a
+differenza di dls-chatbot, che esponeva sessioni multiple discoverable per
+simulare un'interfaccia tipo ChatGPT. Il comando `/reset` (CLI) azzera la
+cronologia della sessione corrente invece di aprirne una nuova.
+
+Messi alla prova end-to-end (creazione/ripresa/reset sessione contro un Postgres
+reale in `agent_sessions`): funzionano correttamente. La chiamata reale a Gemini
+(`send_async` completo) non è stata testata in questa fase per mancanza di una
+API key reale a disposizione — da verificare con una chiave vera prima del
+prossimo passo.
 
 ## 4. Persistenza dati
 
@@ -212,8 +237,10 @@ le 6 tabelle su un container Postgres reale.
 
 ## 7. Punti ancora aperti (da affrontare nelle prossime fasi)
 
-1. Scaffolding del codice concreto (dipendenze pyproject, `ChatService`/`ADKChatService`, CLI, config, error handling dei tool).
-2. Design degli agenti ADK per il dominio: orchestratore + sub-agenti (catalogazione con inferenza categorie, promemoria proattivi con fallback su budget, liste/task condivisi), tool e relativi schemi Pydantic.
-3. Gestione dei link (requirements.md §7.7) — non ancora discusso.
-4. Requisiti di disponibilità/affidabilità (requirements.md §7.9).
-5. Popolamento iniziale della tabella `users` (seed dei 2 numeri autorizzati) — da fare a mano o via comando/migrazione dati, non ancora deciso.
+1. Design degli agenti ADK per il dominio: orchestratore + sub-agenti (catalogazione con inferenza categorie, promemoria proattivi con fallback su budget, liste/task condivisi), tool e relativi schemi Pydantic — sostituirà [placeholder_agent.py](../src/whatsapp_assistant/agents/placeholder_agent.py).
+2. Meccanismo di trigger per `reset_session` lato utente (keyword tipo "/reset" nel testo? comando esplicito? quick reply WhatsApp?) — implementato lato `ChatService`/CLI, non ancora deciso per il canale WhatsApp reale.
+3. Integrazione di `ChatService` nel flusso webhook reale (`services/handler.py` attualmente gestisce solo trascrizione audio, non parla ancora con `ChatService`) — dipende dal punto 1.
+4. Gestione dei link (requirements.md §7.7) — non ancora discusso.
+5. Requisiti di disponibilità/affidabilità (requirements.md §7.9).
+6. Popolamento iniziale della tabella `users` (seed dei 2 numeri autorizzati) — da fare a mano o via comando/migrazione dati, non ancora deciso.
+7. Verifica end-to-end di `ADKChatService.send_async` con una API key Gemini reale (finora testata solo la gestione sessioni, non la chiamata al modello).
