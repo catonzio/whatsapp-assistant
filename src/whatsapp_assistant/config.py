@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     # Separate database, same Postgres instance, used exclusively by ADK's
     # DatabaseSessionService (its own internal schema, not modeled by us).
     agent_sessions_database_url: str
+    
+    # The agentic framework to use for the chat service.
+    # Currently only "google-adk" is supported.
+    agentic_framework: str = "google-adk"
 
     @property
     def graph_url(self) -> str:

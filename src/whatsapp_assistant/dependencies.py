@@ -30,7 +30,9 @@ def get_transcription_service() -> TranscriptionService:
 @lru_cache
 def get_chat_service() -> ChatService:
     settings = get_settings()
-    return ADKChatService(build_runner(settings))
+    if settings.agentic_framework == "google-adk":
+        return ADKChatService(build_runner(settings))
+    raise ValueError(f"Unsupported agentic framework: {settings.agentic_framework}")
 
 
 @lru_cache
