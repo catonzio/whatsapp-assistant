@@ -1,3 +1,4 @@
+import json
 import logging
 
 from fastapi import (
@@ -11,7 +12,10 @@ from fastapi import (
 
 from ..configs.settings import Settings, get_settings
 from ..services.dependencies import get_message_handler
+from ..services.whatsapp.dependencies import get_inbound_message_store
 from ..services.whatsapp.handler import MessageHandler
+from ..services.whatsapp.inbound_store import InboundMessageStore
+from ..services.whatsapp.signature import verify_signature
 
 logger = logging.getLogger("whatsapp-assistant")
 
@@ -41,10 +45,28 @@ async def verify_webhook(
 async def receive_webhook(
     request: Request,
     background_tasks: BackgroundTasks,
+    settings: Settings = Depends(get_settings),
     handler: MessageHandler = Depends(get_message_handler),
+    inbound_store: InboundMessageStore = Depends(get_inbound_message_store),
 ) -> Response:
-    """Receive incoming messages. We ACK immediately and process in the background,
-    because WhatsApp retries the webhook if we don't reply with 200 quickly."""
-    payload = await request.json()
-    background_tasks.add_task(handler.process_payload, payload)
+    """Receive incoming messages.
+
+    Verifies the payload actually came from Meta (HMAC signature), durably
+    records every message *before* acking (so a crash after the ack can't
+    lose it — see docs/architecture.md §6.2), then acks 200 immediately and
+    processes in the background, because WhatsApp retries the webhook if we
+    don't reply with 200 quickly.
+    """
+    body = await request.body()
+    signature = request.headers.get("x-hub-signature-256")
+    if not verify_signature(body, signature, settings.whatsapp_app_secret):
+        logger.warning("Rejecting webhook POST with invalid/missing signature")
+        raise HTTPException(status_code=401, detail="Invalid signature")
+
+    payload = json.loads(body)
+
+    new_message_ids = await inbound_store.record_all(payload)
+    for message_id in new_message_ids:
+        background_tasks.add_task(handler.process_stored_message, message_id)
+
     return Response(status_code=200)

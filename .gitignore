@@ -16,6 +16,10 @@ attachments
 logs
 data/database
 
+# Coverage reports (scripts/run_coverage.sh)
+.coverage
+htmlcov/
+
 # Secrets
 secrets/*
 !secrets/.env.example

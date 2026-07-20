@@ -28,7 +28,7 @@ async def chat_loop(chat_service: ChatService, user_id: str, stream: bool) -> No
     while True:
         try:
             user_input = input("You: ").strip()
-        except EOFError, KeyboardInterrupt:
+        except (EOFError, KeyboardInterrupt):
             print("\nGoodbye!")
             break
 

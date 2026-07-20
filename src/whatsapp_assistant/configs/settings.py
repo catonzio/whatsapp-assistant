@@ -9,20 +9,22 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # Secrets / API credentials
-    openai_api_key: str
     # Access token from the Meta app (WhatsApp > API Setup).
     whatsapp_token: str
     # The "Phone number ID" shown in the same panel (NOT the phone number itself).
     whatsapp_phone_number_id: str
     # Any string you choose; must match what you enter in the Meta webhook config.
     whatsapp_verify_token: str
+    # App secret from the Meta app (Settings > Basic). Used to verify the
+    # X-Hub-Signature-256 header on every POST /webhook so payloads that
+    # didn't actually come from Meta are rejected instead of processed.
+    whatsapp_app_secret: str
     # Used both by GeminiMediaUploader and, indirectly, by ADK/google-genai
     # (which reads the GEMINI_API_KEY env var already populated by load_dotenv()).
     gemini_api_key: str
 
     # Tunables (sensible defaults)
     graph_api_version: str = "v21.0"
-    transcription_model: str = "gpt-4o-transcribe"
     # WhatsApp text messages have a 4096-char body limit.
     max_message_len: int = 4096
 

@@ -4,6 +4,7 @@ Confines every ADK/google-genai type conversion here — no `google.genai.types`
 or ADK-specific object ever leaks to callers (webhook, handler, CLI).
 """
 
+import asyncio
 import logging
 
 from google.adk.artifacts import InMemoryArtifactService
@@ -39,10 +40,26 @@ def build_runner(settings: Settings) -> Runner:
 
 
 class ADKChatService(ChatService):
-    """Wraps a Google ADK `Runner`. One continuous session per user_id."""
+    """Wraps a Google ADK `Runner`. One continuous session per user_id.
+
+    Serializes `send_async`/`reset_session` per user_id with an in-memory
+    asyncio.Lock: without it, two messages arriving close together for the
+    same user (e.g. a voice note immediately followed by a text) can run
+    `_get_or_create_session`/`run_async` concurrently against the same ADK
+    session, racing on session creation and interleaving the Runner's
+    session-state updates. `_locks` grows one entry per distinct user_id ever
+    seen and is never evicted — fine at this app's scale (two users, per
+    requirements.md §2); would need eviction for a system with unbounded users.
+    """
 
     def __init__(self, runner: Runner | None = None):
         self._runner = runner or build_runner(get_settings())
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    def _lock_for(self, user_id: str) -> asyncio.Lock:
+        # dict.setdefault has no `await` inside it, so this can't race even
+        # though asyncio is single-threaded and cooperative.
+        return self._locks.setdefault(user_id, asyncio.Lock())
 
     @staticmethod
     def _build_content(message: ChatMessage) -> types.Content:
@@ -72,33 +89,35 @@ class ADKChatService(ChatService):
 
     async def send_async(self, message: ChatMessage) -> str:
         session_id = message.session_id or message.user_id
-        await self._get_or_create_session(message.user_id, session_id)
-        content = self._build_content(message)
+        async with self._lock_for(message.user_id):
+            await self._get_or_create_session(message.user_id, session_id)
+            content = self._build_content(message)
 
-        response_parts: list[str] = []
-        async for event in self._runner.run_async(
-            user_id=message.user_id,
-            session_id=session_id,
-            new_message=content,
-        ):
-            if (
-                not event.is_final_response()
-                or not event.content
-                or not event.content.parts
+            response_parts: list[str] = []
+            async for event in self._runner.run_async(
+                user_id=message.user_id,
+                session_id=session_id,
+                new_message=content,
             ):
-                continue
-            for part in event.content.parts:
-                if part.text:
-                    response_parts.append(part.text)
-        return "".join(response_parts)
+                if (
+                    not event.is_final_response()
+                    or not event.content
+                    or not event.content.parts
+                ):
+                    continue
+                for part in event.content.parts:
+                    if part.text:
+                        response_parts.append(part.text)
+            return "".join(response_parts)
 
     async def reset_session(self, user_id: str) -> None:
         session_id = user_id
-        session = await self._runner.session_service.get_session(
-            app_name=APP_NAME, user_id=user_id, session_id=session_id
-        )
-        if session:
-            await self._runner.session_service.delete_session(
+        async with self._lock_for(user_id):
+            session = await self._runner.session_service.get_session(
                 app_name=APP_NAME, user_id=user_id, session_id=session_id
             )
-            logger.info(f"Reset session for user {user_id}")
+            if session:
+                await self._runner.session_service.delete_session(
+                    app_name=APP_NAME, user_id=user_id, session_id=session_id
+                )
+                logger.info(f"Reset session for user {user_id}")

@@ -15,7 +15,6 @@ dependencies = [
     "google-genai>=1.51.0",
     "greenlet>=3.1.1",
     "httpx2>=2.6.0",
-    "openai>=2.45.0",
     "pydantic-settings>=2.14.2",
     "python-dotenv>=1.2.2",
     "sqlalchemy>=2.0.36",
@@ -23,7 +22,7 @@ dependencies = [
 
 [project.scripts]
 whatsapp-assistant = "whatsapp_assistant.main:main"
-whatsapp-assistant-cli = "whatsapp_assistant.cli:run_cli"
+whatsapp-assistant-cli = "whatsapp_assistant.interfaces.cli:run_cli"
 
 [build-system]
 requires = ["uv_build>=0.11.8,<0.12.0"]
@@ -33,9 +32,22 @@ build-backend = "uv_build"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 
+[tool.coverage.run]
+source = ["src/whatsapp_assistant"]
+omit = [
+    "src/whatsapp_assistant/interfaces/cli.py",  # interactive loop, exercised manually
+    "src/whatsapp_assistant/agents/placeholder_agent.py",  # temporary, see docs/architecture.md §7
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+
 [dependency-groups]
 dev = [
+    "aiosqlite>=0.22.1",
     "pre-commit>=4.6.0",
+    "pytest-cov>=7.1.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "respx>=0.23.1",

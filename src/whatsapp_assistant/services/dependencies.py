@@ -1,22 +1,15 @@
-from functools import lru_cache
-
-from ..configs.settings import get_settings
-from .transcription import TranscriptionService
 from .chat_service.dependencies import get_chat_service
-from .whatsapp.dependencies import get_whatsapp_client, get_message_handler
+from .whatsapp.dependencies import (
+    get_inbound_message_store,
+    get_message_handler,
+    get_phone_whitelist,
+    get_whatsapp_client,
+)
 
 __all__ = [
-    "get_transcription_service",
     "get_chat_service",
     "get_whatsapp_client",
     "get_message_handler",
+    "get_phone_whitelist",
+    "get_inbound_message_store",
 ]
-
-
-@lru_cache
-def get_transcription_service() -> TranscriptionService:
-    settings = get_settings()
-    return TranscriptionService(
-        api_key=settings.openai_api_key,
-        model=settings.transcription_model,
-    )

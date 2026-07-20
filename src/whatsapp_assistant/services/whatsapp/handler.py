@@ -1,10 +1,13 @@
-import json
 import logging
+import traceback
 from typing import TypedDict
+
+from whatsapp_assistant.database.models.inbound_message import InboundMessage
 
 from ..chat_service.chat_service import ChatService
 from ..chat_service.schemas import Attachment, ChatMessage
-from ..transcription import TranscriptionService
+from .authorization import PhoneWhitelist
+from .inbound_store import InboundMessageStore
 from .whatsapp import WhatsAppClient
 
 logger = logging.getLogger("whatsapp-assistant")
@@ -24,38 +27,85 @@ class WhatsAppMessage(TypedDict, total=False):
 
 
 class MessageHandler:
-    """Orchestrates incoming webhook payloads: message -> parse -> agent -> reply."""
+    """Orchestrates incoming webhook payloads: message -> parse -> agent -> reply.
+
+    Durability/idempotency (recording the message, deduping, crash recovery)
+    lives one layer up, in `InboundMessageStore` — this class only knows how
+    to turn *one* already-persisted WhatsApp message dict into a reply.
+    """
 
     def __init__(
         self,
         whatsapp: WhatsAppClient,
-        transcription: TranscriptionService,
         chat_service: ChatService,
         max_message_len: int,
+        authorized_users: PhoneWhitelist,
+        inbound_store: InboundMessageStore,
     ) -> None:
         self._whatsapp = whatsapp
-        self._transcription = transcription
         self._chat_service = chat_service
         self._max_message_len = max_message_len
+        self._authorized_users = authorized_users
+        self._inbound_store = inbound_store
 
-    async def process_payload(self, payload: dict) -> None:
+    async def process_stored_message(self, message_id: int) -> None:
+        """Process a message already durably recorded by `InboundMessageStore`.
+
+        Used both by the live webhook path and by `recover_unfinished_messages`
+        at startup (see docs/architecture.md §6.2) — both just need a message
+        id, so a previous run's leftover rows replay through the exact same
+        path as a fresh delivery.
+        """
+        row: InboundMessage | None = await self._inbound_store.fetch(message_id)
+        if row is None:
+            logger.warning("Stored message %s no longer exists, skipping", message_id)
+            return
+
+        await self._inbound_store.mark_processing(message_id)
         try:
-            logger.info(
-                "Processing webhook payload:\n%s", json.dumps(payload, indent=2)
-            )
-            for entry in payload.get("entry", []):
-                for change in entry.get("changes", []):
-                    value = change.get("value", {})
-                    for message in value.get("messages", []):
-                        await self.handle_message(message)
+            await self.handle_message(row.payload)
         except Exception:
-            logger.exception("Failed to process webhook payload")
+            logger.exception(
+                "Unrecoverable error processing stored message %s", message_id
+            )
+            await self._inbound_store.mark_failed(
+                message_id, traceback.format_exc(limit=5)
+            )
+            return
+        await self._inbound_store.mark_done(message_id)
+
+    async def handle_message(self, message: dict) -> None:
+        sender = message.get("from")
+        if not sender:
+            return
+
+        if not await self._authorized_users.is_authorized(sender):
+            logger.warning("Ignoring message from unauthorized number %s", sender)
+            return
+
+        sender, chat_message = await self._parse_message(message)
+        if chat_message is None:
+            return
+
+        try:
+            reply = await self._chat_service.send_async(chat_message)
+        except Exception:
+            logger.exception("Chat service failed for %s", sender)
+            await self._whatsapp.send_text(
+                sender, "Ops, qualcosa è andato storto. Riprova! 😕"
+            )
+            return
+
+        await self._whatsapp.send_text(sender, reply[: self._max_message_len])
 
     async def _parse_message(self, message: dict) -> tuple[str, ChatMessage | None]:
         """Parse a WhatsApp message payload into a ChatMessage object.
 
-        Extracts sender, text content, and media attachments (audio, image, video, document).
-        Sends user-facing error messages for unsupported message types.
+        Extracts sender, text content, and media attachments (audio, image,
+        video, document) — all forwarded as attachments alongside any caption,
+        for the agent's multimodal tools to handle directly
+        (docs/architecture.md §5); audio is not transcribed separately. Sends
+        user-facing error messages for unsupported message types.
 
         Args:
             message: A WhatsApp message dict from the webhook payload
@@ -115,28 +165,11 @@ class MessageHandler:
             An Attachment object or None if download failed (error already logged).
         """
         try:
-            audio_bytes, mime_type = await self._whatsapp.download_media(media_id)
-            # Generate a simple filename based on media type and a generic name
+            data, mime_type = await self._whatsapp.download_media(media_id)
             filename = f"attachment.{mime_type.split('/')[-1]}"
-            return Attachment(filename=filename, data=audio_bytes, mime_type=mime_type)
+            return Attachment(filename=filename, data=data, mime_type=mime_type)
         except Exception:
             logger.exception(
                 "Failed to download attachment %s (type: %s)", media_id, media_type
             )
             return None
-
-    async def handle_message(self, message: dict) -> None:
-        sender, chat_message = await self._parse_message(message)
-        if chat_message is None:
-            return
-
-        try:
-            reply = await self._chat_service.send_async(chat_message)
-        except Exception:
-            logger.exception("Chat service failed for %s", sender)
-            await self._whatsapp.send_text(
-                sender, "Ops, qualcosa è andato storto. Riprova! 😕"
-            )
-            return
-
-        await self._whatsapp.send_text(sender, reply[: self._max_message_len])
