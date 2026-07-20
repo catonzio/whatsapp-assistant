@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     # X-Hub-Signature-256 header on every POST /webhook so payloads that
     # didn't actually come from Meta are rejected instead of processed.
     whatsapp_app_secret: str
+
     # Used both by GeminiMediaUploader and, indirectly, by ADK/google-genai
     # (which reads the GEMINI_API_KEY env var already populated by load_dotenv()).
     gemini_api_key: str
