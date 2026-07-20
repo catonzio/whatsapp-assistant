@@ -11,7 +11,11 @@ wheels/
 
 # Local environment files
 .ruff_cache
+.pytest_cache
+attachments
+logs
+data/database
 
 # Secrets
-secrets/
+secrets/*
 !secrets/.env.example
