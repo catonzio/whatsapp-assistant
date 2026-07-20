@@ -13,9 +13,9 @@ from argparse import ArgumentParser, Namespace
 
 from dotenv import load_dotenv
 
-from whatsapp_assistant.config import get_settings
-from whatsapp_assistant.services.adk_chat_service import ADKChatService, build_runner
-from whatsapp_assistant.services.chat_service import ChatMessage, ChatService
+from whatsapp_assistant.configs.settings import get_settings
+from whatsapp_assistant.services.chat_service.impls.adk_chat_service import ADKChatService, build_runner
+from whatsapp_assistant.services.chat_service.chat_service import ChatMessage, ChatService
 
 RESET_COMMANDS = {"/reset"}
 EXIT_COMMANDS = {"exit", "quit", "q"}

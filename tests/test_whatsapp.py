@@ -2,7 +2,7 @@ import httpx
 import pytest
 import respx
 
-from whatsapp_assistant.services.whatsapp import WhatsAppClient
+from whatsapp_assistant.services.whatsapp.whatsapp import WhatsAppClient
 
 GRAPH_URL = "https://graph.facebook.com/v21.0"
 

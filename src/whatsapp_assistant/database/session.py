@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from whatsapp_assistant.config import get_settings
+from whatsapp_assistant.configs.settings import get_settings
 
 
 @lru_cache

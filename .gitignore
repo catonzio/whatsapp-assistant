@@ -8,5 +8,10 @@ wheels/
 
 # Virtual environments
 .venv
-.env
+
+# Local environment files
 .ruff_cache
+
+# Secrets
+secrets/
+!secrets/.env.example

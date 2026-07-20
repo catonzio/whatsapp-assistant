@@ -12,8 +12,9 @@ from google.adk.sessions import DatabaseSessionService
 from google.genai import types
 
 from whatsapp_assistant.agents.placeholder_agent import root_agent
-from whatsapp_assistant.config import Settings, get_settings
-from whatsapp_assistant.services.chat_service import ChatMessage, ChatService
+from whatsapp_assistant.configs.settings import Settings, get_settings
+from ..chat_service import ChatService
+from ..schemas import ChatMessage
 
 logger = logging.getLogger("whatsapp-assistant")
 

@@ -2,8 +2,9 @@ import json
 import logging
 from typing import TypedDict
 
-from .chat_service import Attachment, ChatMessage, ChatService
-from .transcription import TranscriptionService
+from ..chat_service.chat_service import ChatService
+from ..chat_service.schemas import Attachment, ChatMessage
+from ..transcription import TranscriptionService
 from .whatsapp import WhatsAppClient
 
 logger = logging.getLogger("whatsapp-assistant")

@@ -4,7 +4,7 @@ from datetime import datetime
 from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
-from whatsapp_assistant.db.base import Base
+from whatsapp_assistant.database.base import Base
 
 
 class ReminderStatus(str, enum.Enum):

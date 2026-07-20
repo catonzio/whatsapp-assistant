@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from whatsapp_assistant.services.handler import MessageHandler
+from whatsapp_assistant.services.whatsapp.handler import MessageHandler
 
 
 @pytest.fixture

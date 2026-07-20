@@ -6,9 +6,9 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
-from whatsapp_assistant.config import get_settings
-from whatsapp_assistant.db.base import Base
-from whatsapp_assistant.db.models import (  # noqa: F401  (import needed to populate Base.metadata)
+from whatsapp_assistant.configs.settings import get_settings
+from whatsapp_assistant.database.base import Base
+from whatsapp_assistant.database.models import (  # noqa: F401  (import needed to populate Base.metadata)
     Category,
     Item,
     List,

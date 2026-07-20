@@ -9,9 +9,9 @@ from fastapi import (
     Response,
 )
 
-from ..config import Settings, get_settings
-from ..dependencies import get_message_handler
-from ..services.handler import MessageHandler
+from ..configs.settings import Settings, get_settings
+from ..services.dependencies import get_message_handler
+from ..services.whatsapp.handler import MessageHandler
 
 logger = logging.getLogger("whatsapp-assistant")
 

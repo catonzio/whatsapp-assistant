@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi.testclient import TestClient
 
-from whatsapp_assistant.config import get_settings
-from whatsapp_assistant.dependencies import get_message_handler
+from whatsapp_assistant.configs.settings import get_settings
+from whatsapp_assistant.services.dependencies import get_message_handler
 from whatsapp_assistant.main import create_app
 
 VERIFY_TOKEN = "test-verify-token"
