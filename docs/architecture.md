@@ -4,6 +4,7 @@
 >
 > - (18/07/2026), aggiornato dopo una revisione critica dell'implementazione
 > - (20/07/2026) che ha corretto diversi problemi di robustezza (autenticazione assente, comando Docker di sviluppo in produzione, entry point CLI rotto, perdita di messaggi in caso di crash, race condition sulle sessioni ADK) prima di procedere con gli agenti di dominio.
+> - (23/07/2026) aggiunto il design degli agenti ADK del dominio (§8): orchestratore + 3 sub-agenti (catalogazione/recupero, promemoria, liste/task) via pattern `AgentTool`, con relativi tool e motivazioni. Scheduler di invio proattivo dei promemoria escluso di proposito da questo giro, resta punto aperto (§10).
 >
 > Complementare a [requirements.md](./requirements.md) (requisiti funzionali/di prodotto) — questo documento riguarda **come** il sistema è costruito tecnicamente.
 
@@ -39,7 +40,7 @@ Componenti principali, in ordine di attraversamento di un messaggio in ingresso:
 1. **Webhook** ([api/webhook.py](../src/whatsapp_assistant/api/webhook.py)) — riceve il payload Meta, verifica il token (`GET /webhook`); su `POST /webhook` verifica la firma HMAC (§6.1), persiste ogni messaggio tramite `InboundMessageStore` **prima** di rispondere (§6.2), poi ack immediato (200) e delega l'elaborazione a un `BackgroundTasks` per ogni messaggio nuovo.
 2. **MessageHandler** ([services/whatsapp/handler.py](../src/whatsapp_assistant/services/whatsapp/handler.py)) — verifica che il mittente sia in whitelist (§6.1), estrae il messaggio dal payload, gestisce testo e allegati (audio/immagini/video/documenti, tutti inoltrati come allegati grezzi — §5), costruisce un `ChatMessage` e lo passa al `ChatService`.
 3. **ChatService** ([services/chat_service/](../src/whatsapp_assistant/services/chat_service/)) — layer di astrazione framework-agnostic tra le interfacce (WhatsApp, CLI) e l'agente. Vedi §3.
-4. **Agente ADK** — orchestratore + sub-agenti specializzati (catalogazione, promemoria, liste/task). Vedi §8 (ancora da progettare in dettaglio).
+4. **Agente ADK** — orchestratore + sub-agenti specializzati (catalogazione, promemoria, liste/task). Design in §8; implementazione ancora da fare (sostituirà [placeholder_agent.py](../src/whatsapp_assistant/agents/placeholder_agent.py)).
 5. **PostgreSQL** — un'unica istanza/container con due database logici separati: dati applicativi (inclusa la coda di durabilità `inbound_messages`, §6.2) e sessioni ADK. Vedi §4.
 
 ## 2. Cosa si porta dal progetto di riferimento (dls-chatbot)
@@ -384,7 +385,126 @@ rivisto se il numero di utenti diventasse imprevedibile.
 - **CLI** (sviluppo): [interfaces/cli.py](../src/whatsapp_assistant/interfaces/cli.py), comando `whatsapp-assistant-cli`. Per testare l'agente in locale senza passare da Meta/WhatsApp. Non-streaming per semplicità (può comunque usare `send_stream_async` se utile per un'animazione "typing" in locale). L'entry point in `pyproject.toml` puntava al vecchio path (`whatsapp_assistant.cli`, rimosso dal refactor del 20/07) ed era inoltre rotto da un errore di sintassi Python 2 (`except EOFError, KeyboardInterrupt:`) — nessuno se n'era accorto perché nessun test invoca l'entry point pubblicato; entrambi corretti in questa revisione.
 - **WAHA**: modulo mantenuto nel repository come da requisiti ([api/waha.py](../src/whatsapp_assistant/api/waha.py)), non attivo/non target dello sviluppo attuale. È comunque montato incondizionatamente in `main.py` ed espone `POST /bot` senza alcuna autenticazione: da tenere presente finché resta nel path di produzione (punto aperto, §8).
 
-## 8. Testing e coverage
+## 8. Agenti ADK del dominio
+
+> Design agenti/tool per il dominio (catalogazione, promemoria, liste/task),
+> richiesto in §10 punto 1. Decisioni raccolte il 23/07/2026. Sostituirà
+> [placeholder_agent.py](../src/whatsapp_assistant/agents/placeholder_agent.py) —
+> implementazione non ancora iniziata.
+
+### 8.1 Vista d'insieme
+
+```mermaid
+flowchart TB
+    Runner[ADK Runner] --> Orch[OrchestratorAgent\ngemini-2.0-flash]
+    Orch -->|AgentTool| Cat[CatalogingAgent\ngemini-2.0-flash-lite]
+    Orch -->|AgentTool| Rem[RemindersAgent\ngemini-2.0-flash-lite]
+    Orch -->|AgentTool| Lst[ListsTasksAgent\ngemini-2.0-flash-lite]
+    Cat --> ItemsDB[(items, categories)]
+    Rem --> RemDB[(reminders)]
+    Lst --> ListsDB[(lists, list_items)]
+    Cat --> PlaceAPI[[PlaceLookup\nGoogle Places / OSM]]
+    Cat --> LinkFetch[[fetch_link_metadata]]
+```
+
+**Pattern scelto: `AgentTool`, non `sub_agents`/`transfer_to_agent`.** Con
+`transfer_to_agent` il controllo passa interamente al sub-agente, che diventa
+responsabile della risposta finale e del resto del turno. Con `AgentTool`
+l'orchestratore resta al comando: chiama il sub-agente come una funzione,
+riceve testo indietro, compone lui la risposta finale in italiano. Questo è
+anche il meccanismo che limita la crescita di contesto: nel contesto
+dell'orchestratore entrano solo argomenti + risultato della tool call, non il
+ciclo di tool-calling interno del sub-agente.
+
+### 8.2 OrchestratorAgent (root)
+
+- **Perché esiste**: unico entry point richiesto da `ChatService`/`Runner` (un
+  agente per sessione). Possiede il routing dell'intento, il tono
+  conversazionale in italiano, i comportamenti a livello di sessione (es.
+  trigger `/reset`, §10 punto 2).
+- **Tool**: `AgentTool(CatalogingAgent)`, `AgentTool(RemindersAgent)`,
+  `AgentTool(ListsTasksAgent)`. Nessun tool diretto sul DB — solo
+  routing/composizione, per tenere le sue istruzioni brevi ed economiche dato
+  che gira su ogni messaggio.
+- **Se manca**: nessun layer di routing pulito; ogni sub-agente dovrebbe fare
+  la propria classificazione d'intento e gestione del tono, oppure si ricade
+  in un agente monolitico (vanifica modularità e obiettivo di costo).
+- **Nota multimodale (verificata, non assunta)**: `AgentTool` ha una
+  limitazione nota nel forwarding di contenuti multimodali (immagini/audio)
+  verso il sub-agente —
+  [google/adk-python#729](https://github.com/google/adk-python/issues/729)
+  documenta che `transfer_to_agent` propaga correttamente i contenuti
+  multimodali mentre `AgentTool` no, perché argomenti/risultati dei tool sono
+  tipizzati come stringhe semplici, non `Part` grezze. Conseguenza per questo
+  design: **l'orchestratore deve fare lui il ragionamento visivo/audio** (è
+  l'agente root, vede il `Content` grezzo nativamente) e passare una
+  descrizione testuale estratta come argomento della tool call verso il
+  sub-agente di dominio — es. "foto di un menu, nome locale X, piatti: ..." →
+  `CatalogingAgent`. **Da verificare end-to-end con un'immagine reale prima di
+  fare affidamento su questo** (nulla in questo repo esercita ancora
+  `gemini_media.py`, vedi §9).
+
+### 8.3 CatalogingAgent (item + categorie, include il recupero)
+
+Copre requirements §4.2/§4.3. Il recupero resta qui, non un agente separato —
+stesse tabelle, stessa responsabilità singola ("dominio catalogo, lettura +
+scrittura").
+
+| Tool | Perché esiste | Cosa manca senza |
+| --- | --- | --- |
+| `search_categories(query?)` | Dà all'LLM l'elenco categorie esistenti per inferire (es. "viaggi" esiste → un nome di luogo è probabilmente un viaggio) invece di indovinare alla cieca | L'agente inventa una categoria nuova ogni volta, viola esplicitamente la logica di inferenza richiesta dal committente |
+| `verify_place(name, location?)` | Verifica di realtà prima di auto-creare "ristoranti". Tool basato su **Protocol** `PlaceLookup`, impl. di default Google Maps Places API, swappabile a OSM Nominatim via config `PLACE_LOOKUP_PROVIDER` (stesso pattern Protocol già usato per `ObjectStorage`, §5) | Categoria inventata solo dalla conoscenza dell'LLM → rischio di allucinazione (un bar diventa "ristorante") senza alcuna verifica, esattamente ciò che il committente ha segnalato come necessario |
+| `find_similar_items(name, category?)` | Fuzzy match (`pg_trgm`) prima dell'insert — risolve il punto aperto "duplicati/aggiornamenti" (requirements §7.5) | Righe duplicate silenziose; "aggiorna il voto di X" diventa irraggiungibile perché nulla corrisponde mai a una riga esistente |
+| `save_item` / `update_item(category, name, notes?, rating?, attributes)` | Persistenza vera e propria; auto-crea la riga categoria se assente | Nulla viene salvato — nessuna catalogazione avviene |
+| `search_items(category?, name?, location?, free_text?)` | Percorso di lettura dedicato per domande in linguaggio naturale ("che ristoranti a Roma?") | Nessun percorso di recupero — il bot potrebbe scrivere ma mai rispondere a domande di recupero |
+| `fetch_link_metadata(url)` | Estrae og:title/description/image, **chiede conferma all'utente per default**; `Settings.link_auto_fetch=true` salta la conferma e scarica direttamente. Il branching vive nelle istruzioni dell'agente + un flag di settings letto dal tool, non un secondo tool | Link salvati come stringhe nude, nessun contesto film/ristorante/articolo estratto automaticamente |
+
+### 8.4 RemindersAgent
+
+- **Perché separato dalla catalogazione**: ciclo di vita completamente diverso
+  (`due_at`, RRULE, macchina a stati `pending/sent/done/cancelled`) e un
+  consumatore futuro diverso — lo scheduler proattivo (esplicitamente fuori
+  scope per ora, vedi §10 punto 1) leggerà direttamente questa
+  tabella/contratto tool, senza dipendere dagli interni della catalogazione.
+- **Tool**: `create_reminder(title, due_at, timezone?, recurrence_rule?,
+  linked_item_id?)`, `list_reminders(filters)`, `update_reminder`,
+  `cancel_reminder`.
+- **Esplicitamente escluso**: invio, budget-gating, dispatch dei template
+  WhatsApp — da progettare dopo, servizio cron non-ADK separato.
+- **Se accorpato alla catalogazione**: ogni richiesta di catalogazione (salva
+  un ristorante) caricherebbe in contesto anche istruzioni/tool di CRUD
+  promemoria senza motivo, e viceversa — viola la responsabilità singola e
+  spreca token sui modelli economici.
+
+### 8.5 ListsTasksAgent
+
+- **Perché separato**: pattern di scrittura diverso (stato checklist da
+  spuntare vs voto/note) e forma di recupero diversa ("cosa manca nella lista
+  della spesa?"). Liste della spesa e task riusano lo stesso schema generico
+  `lists`/`list_items` (già deciso, §4.2), discriminato da `list_type`.
+- **Tool**: `create_list(list_type, name)`, `add_list_item(list_id,
+  description, attributes?)`, `check_item` / `uncheck_item`,
+  `remove_list_item`, `list_items(list_id | list_type)`. Campi specifici dei
+  task (priorità/scadenza/assegnatario) vivono in `attributes` — nessun tool
+  dedicato, stesso pattern di `items.attributes`.
+- **Se assente**: le richieste di spesa/task finiscono attaccate a un agente
+  su un dominio non correlato, e ogni messaggio sulla lista della spesa
+  trascinerebbe in contesto i tool di place-lookup/link-fetch della
+  catalogazione per nulla.
+
+### 8.6 Trasversali, non agenti
+
+- **Auth/whitelist/budget-gating**: resta nel layer webhook/handler (già
+  implementato), non tocca mai un agente — nessun ragionamento LLM serve per
+  una lookup su DB.
+- **`@may_fail`/`@may_fail_async`** (già portati, oggi 0% di uso, vedi §9): da
+  applicare a ogni nuovo tool — primo caso d'uso reale per questo decoratore.
+- **Split modelli**: orchestratore su `gemini-2.0-flash` (routing + tono
+  italiano + ragionamento visivo è la parte delicata), i 3 agenti di dominio
+  su `gemini-2.0-flash-lite` (tool-calling strutturato su CRUD, compito
+  meccanico).
+
+## 9. Testing e coverage
 
 Suite in [tests/](../tests/), eseguita con `pytest` (`asyncio_mode = "auto"`,
 niente marker espliciti sui test async). Copertura misurata con
@@ -427,9 +547,9 @@ ancora usati da nessun tool reale — §9 punto 1), `configs/folder.py` (79%,
 codice ereditato da dls-chatbot non applicabile a questo progetto, vedi §2
 "Da NON portare").
 
-## 9. Punti ancora aperti (da affrontare nelle prossime fasi)
+## 10. Punti ancora aperti (da affrontare nelle prossime fasi)
 
-1. Design degli agenti ADK per il dominio: orchestratore + sub-agenti (catalogazione con inferenza categorie, promemoria proattivi con fallback su budget, liste/task condivisi), tool e relativi schemi Pydantic — sostituirà [placeholder_agent.py](../src/whatsapp_assistant/agents/placeholder_agent.py).
+1. ~~Design degli agenti ADK per il dominio~~ — **fatto, vedi §8** (23/07/2026). Resta da fare: implementazione reale di orchestratore + 3 sub-agenti e tool, schemi Pydantic dei tool, verifica end-to-end del caveat multimodale `AgentTool` descritto in §8.2. **Fuori scope per ora** (deciso 23/07/2026): lo scheduler di invio proattivo dei promemoria con fallback su budget — resta un componente separato non-ADK da progettare a parte.
 2. Meccanismo di trigger per `reset_session` lato utente (keyword tipo "/reset" nel testo? comando esplicito? quick reply WhatsApp?) — implementato lato `ChatService`/CLI, non ancora deciso per il canale WhatsApp reale.
 3. Gestione dei link (requirements.md §7.7) — non ancora discusso.
 4. Requisiti di disponibilità/affidabilità (requirements.md §7.9) — §6 di questo documento copre "non perdere/duplicare messaggi", ma non definisce SLA/tempo massimo di risposta.
