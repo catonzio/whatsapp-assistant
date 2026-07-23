@@ -8,12 +8,12 @@ module once that design is done.
 """
 
 from google.adk import Agent
+from whatsapp_assistant.configs.settings import get_settings
 
-GEMINI_MODEL = "gemini-2.5-flash"
 
 root_agent = Agent(
     name="PlaceholderAssistant",
-    model=GEMINI_MODEL,
+    model=get_settings().gemini_model,
     description="Placeholder assistant, used only to test the chat plumbing.",
     instruction=(
         "You are a placeholder assistant for a personal WhatsApp assistant "

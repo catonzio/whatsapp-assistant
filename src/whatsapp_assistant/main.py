@@ -1,6 +1,6 @@
 import logging
-from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import AsyncGenerator
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
@@ -17,7 +17,7 @@ logger = logging.getLogger("whatsapp-assistant")
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     try:
         await recover_unfinished_messages(
             get_message_handler(), get_inbound_message_store()

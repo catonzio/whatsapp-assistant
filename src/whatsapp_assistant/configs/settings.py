@@ -1,3 +1,4 @@
+import os
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -6,7 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Application settings, loaded from environment / .env file."""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file="secrets/.env", extra="ignore")
 
     # Secrets / API credentials
     # Access token from the Meta app (WhatsApp > API Setup).
@@ -44,6 +45,9 @@ class Settings(BaseSettings):
     # The agentic framework to use for the chat service.
     # Currently only "google-adk" is supported.
     agentic_framework: str = "google-adk"
+    
+    # The model to use for the root agent. Currently only Gemini is supported.
+    gemini_model: str = "gemini-3.1-flash-lite"
 
     @property
     def graph_url(self) -> str:
@@ -70,5 +74,14 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    """Cached accessor so settings are parsed once per process."""
-    return Settings()  # type: ignore[call-arg]
+    """Cached accessor so settings are parsed once per process.
+
+    Also mirrors gemini_api_key into the process environment: google-genai/ADK
+    reads GEMINI_API_KEY directly from os.environ, but pydantic_settings only
+    populates the Settings object's fields, not the environment itself.
+    Entrypoints that don't call load_dotenv() first (e.g. `adk web`, which
+    imports an agent module directly) would otherwise see no API key.
+    """
+    settings = Settings()  # type: ignore[call-arg]
+    os.environ.setdefault("GEMINI_API_KEY", settings.gemini_api_key)
+    return settings
