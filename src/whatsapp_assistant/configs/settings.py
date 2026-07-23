@@ -32,10 +32,14 @@ class Settings(BaseSettings):
     # Postgres connection for application data (items, categories, reminders,
     # lists, users). Async driver (asyncpg) required. No default on purpose:
     # must be set explicitly via .env, never fall back to weak credentials.
-    database_url: str
-    # Separate database, same Postgres instance, used exclusively by ADK's
-    # DatabaseSessionService (its own internal schema, not modeled by us).
-    agent_sessions_database_url: str
+    database_host: str
+    database_port: int
+    database_user: str
+    database_password: str
+    database_db: str
+    database_db_agent_sessions: str
+
+    database_protocol: str
 
     # The agentic framework to use for the chat service.
     # Currently only "google-adk" is supported.
@@ -44,6 +48,24 @@ class Settings(BaseSettings):
     @property
     def graph_url(self) -> str:
         return f"https://graph.facebook.com/{self.graph_api_version}"
+
+    @property
+    def database_url(self) -> str:
+        return (
+            f"{self.database_protocol}://{self.database_user}:{self.database_password}"
+            f"@{self.database_host}:{self.database_port}/{self.database_db}"
+        )
+
+    @property
+    def agent_sessions_database_url(self) -> str:
+        """
+        Separate database, same db instance, used exclusively by ADK's
+        DatabaseSessionService (its own internal schema, not modeled by us).
+        """
+        return (
+            f"{self.database_protocol}://{self.database_user}:{self.database_password}"
+            f"@{self.database_host}:{self.database_port}/{self.database_db_agent_sessions}"
+        )
 
 
 @lru_cache
