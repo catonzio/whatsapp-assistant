@@ -2,6 +2,8 @@ FROM python:3.14-slim
 
 WORKDIR /whatsapp-assistant
 COPY src ./src
+COPY alembic ./alembic
+COPY alembic.ini .
 COPY pyproject.toml .python-version uv.lock README.md ./
 
 RUN pip install uv
