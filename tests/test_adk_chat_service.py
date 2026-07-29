@@ -31,9 +31,18 @@ class FakeSessionService:
         self.delete_calls.append((user_id, session_id))
 
 
+ROOT_AGENT_NAME = "OrchestratorAssistant"
+
+
 class FakeEvent:
-    def __init__(self, text: str | None, final: bool = True) -> None:
+    def __init__(
+        self,
+        text: str | None,
+        final: bool = True,
+        author: str = ROOT_AGENT_NAME,
+    ) -> None:
         self._final = final
+        self.author = author
         self.content = SimpleNamespace(parts=[SimpleNamespace(text=text)]) if text is not None else None
 
     def is_final_response(self) -> bool:
@@ -48,6 +57,7 @@ async def test_send_async_concatenates_only_final_text_parts():
     class FakeRunner:
         def __init__(self) -> None:
             self.session_service = FakeSessionService()
+            self.agent = SimpleNamespace(name=ROOT_AGENT_NAME)
 
         async def run_async(self, user_id, session_id, new_message):
             yield FakeEvent(None, final=False)  # intermediate event, must be ignored
@@ -62,10 +72,40 @@ async def test_send_async_concatenates_only_final_text_parts():
     assert result == "Ciao mondo!"
 
 
+async def test_send_async_ignores_sub_agent_final_response():
+    """A single_turn sub-agent delegation (orchestrator_agent.py) runs inline
+    in this session, so its own final-response event is also visible in the
+    stream alongside the orchestrator's. Without filtering by author, both
+    get concatenated and the sub-agent's answer is duplicated."""
+
+    class FakeRunner:
+        def __init__(self) -> None:
+            self.session_service = FakeSessionService()
+            self.agent = SimpleNamespace(name=ROOT_AGENT_NAME)
+
+        async def run_async(self, user_id, session_id, new_message):
+            yield FakeEvent(
+                "Nella lista Spesa ci sono: petto di pollo, carne macinata",
+                author="ListsTasksAgent",
+            )
+            yield FakeEvent(
+                "Nella lista Spesa ci sono: petto di pollo, carne macinata",
+                author=ROOT_AGENT_NAME,
+            )
+
+    runner = FakeRunner()
+    service = _service(runner)
+
+    result = await service.send_async(ChatMessage(user_id="u1", text="hi"))
+
+    assert result == "Nella lista Spesa ci sono: petto di pollo, carne macinata"
+
+
 async def test_send_async_creates_session_when_absent_and_reuses_it():
     class FakeRunner:
         def __init__(self) -> None:
             self.session_service = FakeSessionService()
+            self.agent = SimpleNamespace(name=ROOT_AGENT_NAME)
 
         async def run_async(self, user_id, session_id, new_message):
             yield FakeEvent("ok")
@@ -84,6 +124,7 @@ async def test_reset_session_deletes_existing_session():
     class FakeRunner:
         def __init__(self) -> None:
             self.session_service = FakeSessionService()
+            self.agent = SimpleNamespace(name=ROOT_AGENT_NAME)
 
         async def run_async(self, user_id, session_id, new_message):
             yield FakeEvent("ok")
@@ -101,6 +142,7 @@ async def test_reset_session_noop_when_no_session_exists():
     class FakeRunner:
         def __init__(self) -> None:
             self.session_service = FakeSessionService()
+            self.agent = SimpleNamespace(name=ROOT_AGENT_NAME)
 
     runner = FakeRunner()
     service = _service(runner)
@@ -121,6 +163,7 @@ async def test_send_async_serializes_calls_for_the_same_user():
     class FakeRunner:
         def __init__(self) -> None:
             self.session_service = FakeSessionService()
+            self.agent = SimpleNamespace(name=ROOT_AGENT_NAME)
 
         async def run_async(self, user_id, session_id, new_message):
             log.append(f"start:{user_id}")
@@ -165,6 +208,7 @@ async def test_send_async_does_not_serialize_different_users():
     class FakeRunner:
         def __init__(self) -> None:
             self.session_service = FakeSessionService()
+            self.agent = SimpleNamespace(name=ROOT_AGENT_NAME)
 
         async def run_async(self, user_id, session_id, new_message):
             log.append(f"start:{user_id}")

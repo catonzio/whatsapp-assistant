@@ -104,8 +104,18 @@ class ADKChatService(ChatService):
                 session_id=session_id,
                 new_message=content,
             ):
+                # A single_turn sub-agent delegation (orchestrator_agent.py)
+                # runs inline in this session, so its own final-response event
+                # is also visible here alongside the orchestrator's — without
+                # the author check we'd concatenate both and duplicate the
+                # sub-agent's answer with the orchestrator's rephrasing of it.
+                runner_agent = self._runner.agent
+                if not runner_agent:
+                    raise RuntimeError("Runner has no agent")
+
                 if (
-                    not event.is_final_response()
+                    event.author != runner_agent.name
+                    or not event.is_final_response()
                     or not event.content
                     or not event.content.parts
                 ):
