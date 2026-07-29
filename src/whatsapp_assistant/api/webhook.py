@@ -1,4 +1,3 @@
-import json
 import logging
 
 from fastapi import (
@@ -15,6 +14,7 @@ from ..services.dependencies import get_message_handler
 from ..services.whatsapp.dependencies import get_inbound_message_store
 from ..services.whatsapp.handler import MessageHandler
 from ..services.whatsapp.inbound_store import InboundMessageStore
+from ..services.whatsapp.schemas import WhatsAppWebhookPayload
 from ..services.whatsapp.signature import verify_signature
 
 logger = logging.getLogger("whatsapp-assistant")
@@ -56,6 +56,13 @@ async def receive_webhook(
     lose it — see docs/architecture.md §6.2), then acks 200 immediately and
     processes in the background, because WhatsApp retries the webhook if we
     don't reply with 200 quickly.
+
+    The body is read as raw bytes and verified *before* any JSON parsing —
+    that ordering can't be replaced with a declared Pydantic body parameter
+    (FastAPI would parse/validate it ahead of the signature check). The
+    request body schema is documented separately (see `_add_webhook_schema`
+    in `main.py`), and used below to validate/normalize the payload once the
+    signature is confirmed.
     """
     body = await request.body()
     signature = request.headers.get("x-hub-signature-256")
@@ -63,7 +70,8 @@ async def receive_webhook(
         logger.warning("Rejecting webhook POST with invalid/missing signature")
         raise HTTPException(status_code=401, detail="Invalid signature")
 
-    payload = json.loads(body)
+    validated = WhatsAppWebhookPayload.model_validate_json(body)
+    payload = validated.model_dump(mode="json", by_alias=True, exclude_unset=True)
 
     new_message_ids = await inbound_store.record_all(payload)
     for message_id in new_message_ids:
