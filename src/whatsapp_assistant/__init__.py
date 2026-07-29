@@ -1,3 +1,3 @@
-from .main import app, create_app, main
+from .main import create_app, main
 
-__all__ = ["app", "create_app", "main"]
+__all__ = ["create_app", "main"]

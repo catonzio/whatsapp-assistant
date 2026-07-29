@@ -9,6 +9,13 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file="secrets/.env", extra="ignore")
 
+    # App metadata (used in OpenAPI docs, etc.)
+    app_name: str = "whatsapp-assistant"
+    app_description: str = ""
+    version: str = "0.1.0"
+    domain: str = "localhost"
+    root_path: str = "/whatsapp-assistant"
+    
     # Secrets / API credentials
     # Access token from the Meta app (WhatsApp > API Setup).
     whatsapp_token: str
