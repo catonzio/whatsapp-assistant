@@ -1,3 +1,3 @@
-from .placeholder_agent import root_agent
+from .orchestrator_agent import build_root_agent
 
-__all__ = ["root_agent"]
+__all__ = ["build_root_agent"]

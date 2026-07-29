@@ -12,7 +12,7 @@ from google.adk.runners import Runner
 from google.adk.sessions import DatabaseSessionService
 from google.genai import types
 
-from whatsapp_assistant.agents.placeholder_agent import root_agent
+from whatsapp_assistant.agents.orchestrator_agent import build_root_agent
 from whatsapp_assistant.configs.settings import Settings, get_settings
 from ..chat_service import ChatService
 from ..schemas import ChatMessage
@@ -25,15 +25,20 @@ APP_NAME = "whatsapp_assistant"
 def build_runner(settings: Settings) -> Runner:
     """Build the ADK Runner backed by the dedicated `agent_sessions` database.
 
-    TEMPORARY: wraps `placeholder_agent.root_agent`. Will be replaced once the
-    real domain agents are designed (docs/architecture.md §7, point 2).
+    Builds the root agent here (not at import time, see
+    orchestrator_agent.build_root_agent's docstring) so that constructing a
+    domain agent's tools — which can raise if e.g. Google Places is selected
+    without an API key — only fails when a real Runner is actually needed.
     """
     session_service = DatabaseSessionService(
         db_url=settings.agent_sessions_database_url
     )
     return Runner(
         app_name=APP_NAME,
-        agent=root_agent,
+        agent=build_root_agent(
+            orchestrator_model=settings.gemini_model_orchestrator,
+            subagents_model=settings.gemini_model_subagent,
+        ),
         session_service=session_service,
         artifact_service=InMemoryArtifactService(),
     )

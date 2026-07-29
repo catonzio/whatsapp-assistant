@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, Text, func
+from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -50,7 +50,11 @@ class ListItem(Base):
         DateTime(timezone=True), nullable=True
     )
     # e.g. for tasks: {"priority": "high", "due_date": "...", "assigned_to": <user_id>}
-    attributes: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # `with_variant`: JSONB on Postgres, plain JSON on SQLite — same
+    # rationale as Item.attributes.
+    attributes: Mapped[dict | None] = mapped_column(
+        JSONB().with_variant(JSON(), "sqlite"), nullable=True
+    )
     created_by: Mapped[int | None] = mapped_column(
         ForeignKey("users.id"), nullable=True
     )

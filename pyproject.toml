@@ -43,7 +43,6 @@ filterwarnings = [
 source = ["src/whatsapp_assistant"]
 omit = [
     "src/whatsapp_assistant/interfaces/cli.py",  # interactive loop, exercised manually
-    "src/whatsapp_assistant/agents/placeholder_agent.py",  # temporary, see docs/architecture.md §7
 ]
 
 [tool.coverage.report]

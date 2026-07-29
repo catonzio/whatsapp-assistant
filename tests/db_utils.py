@@ -1,10 +1,10 @@
 """Shared helper for tests that need a real (but throwaway) async DB.
 
 Uses an in-memory SQLite engine restricted to the specific tables under test
-(`tables=[...]`) rather than `Base.metadata.create_all()` for everything:
-some models (Item, ListItem) use `postgresql.JSONB`, which SQLite can't
-create. Restricting DDL to just the tables a given test needs sidesteps that
-without requiring a real Postgres for fast, isolated unit tests.
+(`tables=[...]`) rather than `Base.metadata.create_all()` for everything —
+keeps each test's schema minimal and explicit about its dependencies.
+`Item.attributes`/`ListItem.attributes` use `JSONB().with_variant(JSON(),
+"sqlite")` specifically so those tables remain creatable here.
 """
 
 from sqlalchemy import Table

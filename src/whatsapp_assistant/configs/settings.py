@@ -45,9 +45,28 @@ class Settings(BaseSettings):
     # The agentic framework to use for the chat service.
     # Currently only "google-adk" is supported.
     agentic_framework: str = "google-adk"
-    
-    # The model to use for the root agent. Currently only Gemini is supported.
-    gemini_model: str = "gemini-3.1-flash-lite"
+
+    # Domain agents (docs/architecture.md §8). Split in two tiers to control
+    # cost: the orchestrator does routing + Italian tone + vision/audio
+    # reasoning on every message (needs to be a bit more capable), the three
+    # domain sub-agents only do structured CRUD tool-calling (cheaper model
+    # is enough).
+    gemini_model_orchestrator: str = "gemini-3.1-flash"
+    gemini_model_subagent: str = "gemini-3.1-flash-lite"
+
+    # Place verification tool (§8.3, requirements.md §4.2): which provider
+    # `verify_place` calls to confirm e.g. "is this actually a restaurant?"
+    # before auto-creating a category. "google" (Places API, paid per call)
+    # or "osm" (Nominatim, free/rate-limited) — swappable without code
+    # changes if Google Places costs eat into the monthly budget.
+    # place_lookup_provider: str = "google"
+    place_lookup_provider: str = "osm"
+    google_maps_api_key: str | None = None
+
+    # Link handling (§8.3, requirements.md §4.5): by default the cataloging
+    # agent asks the user for confirmation before fetching a link's metadata.
+    # Set to True to fetch immediately without asking.
+    link_auto_fetch: bool = False
 
     @property
     def graph_url(self) -> str:

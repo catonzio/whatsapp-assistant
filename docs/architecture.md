@@ -4,7 +4,7 @@
 >
 > - (18/07/2026), aggiornato dopo una revisione critica dell'implementazione
 > - (20/07/2026) che ha corretto diversi problemi di robustezza (autenticazione assente, comando Docker di sviluppo in produzione, entry point CLI rotto, perdita di messaggi in caso di crash, race condition sulle sessioni ADK) prima di procedere con gli agenti di dominio.
-> - (23/07/2026) aggiunto il design degli agenti ADK del dominio (§8): orchestratore + 3 sub-agenti (catalogazione/recupero, promemoria, liste/task) via pattern `AgentTool`, con relativi tool e motivazioni. Scheduler di invio proattivo dei promemoria escluso di proposito da questo giro, resta punto aperto (§10).
+> - (23/07/2026) aggiunto **e implementato** il design degli agenti ADK del dominio (§8): orchestratore + 3 sub-agenti (catalogazione/recupero, promemoria, liste/task), con relativi tool e motivazioni. Pattern finale `sub_agents=[...]` + `mode="single_turn"` (non `AgentTool` esplicito, sconsigliato dalla libreria stessa — vedi §8.1). Scheduler di invio proattivo dei promemoria escluso di proposito da questo giro, resta punto aperto (§10).
 >
 > Complementare a [requirements.md](./requirements.md) (requisiti funzionali/di prodotto) — questo documento riguarda **come** il sistema è costruito tecnicamente.
 
@@ -387,19 +387,19 @@ rivisto se il numero di utenti diventasse imprevedibile.
 
 ## 8. Agenti ADK del dominio
 
-> Design agenti/tool per il dominio (catalogazione, promemoria, liste/task),
-> richiesto in §10 punto 1. Decisioni raccolte il 23/07/2026. Sostituirà
-> [placeholder_agent.py](../src/whatsapp_assistant/agents/placeholder_agent.py) —
-> implementazione non ancora iniziata.
+> Design e implementazione degli agenti/tool per il dominio (catalogazione,
+> promemoria, liste/task), richiesto in §10 punto 1. Decisioni raccolte il
+> 23/07/2026, implementato lo stesso giorno — ha rimpiazzato
+> `placeholder_agent.py` (rimosso). Vedi `src/whatsapp_assistant/agents/`.
 
 ### 8.1 Vista d'insieme
 
 ```mermaid
 flowchart TB
-    Runner[ADK Runner] --> Orch[OrchestratorAgent\ngemini-2.0-flash]
-    Orch -->|AgentTool| Cat[CatalogingAgent\ngemini-2.0-flash-lite]
-    Orch -->|AgentTool| Rem[RemindersAgent\ngemini-2.0-flash-lite]
-    Orch -->|AgentTool| Lst[ListsTasksAgent\ngemini-2.0-flash-lite]
+    Runner[ADK Runner] --> Orch[OrchestratorAgent\ngemini-3.1-flash]
+    Orch -->|sub_agents, mode=single_turn| Cat[CatalogingAgent\ngemini-3.1-flash-lite]
+    Orch -->|sub_agents, mode=single_turn| Rem[RemindersAgent\ngemini-3.1-flash-lite]
+    Orch -->|sub_agents, mode=single_turn| Lst[ListsTasksAgent\ngemini-3.1-flash-lite]
     Cat --> ItemsDB[(items, categories)]
     Rem --> RemDB[(reminders)]
     Lst --> ListsDB[(lists, list_items)]
@@ -407,14 +407,21 @@ flowchart TB
     Cat --> LinkFetch[[fetch_link_metadata]]
 ```
 
-**Pattern scelto: `AgentTool`, non `sub_agents`/`transfer_to_agent`.** Con
-`transfer_to_agent` il controllo passa interamente al sub-agente, che diventa
-responsabile della risposta finale e del resto del turno. Con `AgentTool`
-l'orchestratore resta al comando: chiama il sub-agente come una funzione,
-riceve testo indietro, compone lui la risposta finale in italiano. Questo è
-anche il meccanismo che limita la crescita di contesto: nel contesto
-dell'orchestratore entrano solo argomenti + risultato della tool call, non il
-ciclo di tool-calling interno del sub-agente.
+**Pattern scelto: `sub_agents=[...]` con `mode="single_turn"` sui 3 agenti di
+dominio, non l'`AgentTool` esplicito.** Verificato leggendo i sorgenti di
+`google-adk` 2.5.0 effettivamente installati in questo repo (non solo la
+documentazione): usare `AgentTool` direttamente è ora **esplicitamente
+sconsigliato** dalla libreria stessa ("Direct usage of `AgentTool` is
+discouraged. See the single-turn mode guide for details.",
+`google/adk/tools/agent_tool.py`). Impostando `mode="single_turn"` su un
+sub-agente e passandolo in `sub_agents=[...]` del genitore, ADK lo registra
+da solo come tool (`_SingleTurnAgentTool`, wrapper interno di `AgentTool`) —
+stesso comportamento "genitore resta al comando, riceve testo indietro",
+ma **eseguito come nodo dentro la sessione ADK del genitore**
+(`ToolContext.run_node`) invece che con un `Runner`/sessione usa-e-getta
+separati come fa `AgentTool` classico. Confermato con un test end-to-end in
+questo repo (`build_root_agent()` produce 3 `_SingleTurnAgentTool`, ciascuno
+con schema `{"request": "string"}`, esattamente come da manuale).
 
 ### 8.2 OrchestratorAgent (root)
 
@@ -422,27 +429,26 @@ ciclo di tool-calling interno del sub-agente.
   agente per sessione). Possiede il routing dell'intento, il tono
   conversazionale in italiano, i comportamenti a livello di sessione (es.
   trigger `/reset`, §10 punto 2).
-- **Tool**: `AgentTool(CatalogingAgent)`, `AgentTool(RemindersAgent)`,
-  `AgentTool(ListsTasksAgent)`. Nessun tool diretto sul DB — solo
-  routing/composizione, per tenere le sue istruzioni brevi ed economiche dato
-  che gira su ogni messaggio.
+- **Tool**: i 3 sub-agenti di dominio in `sub_agents=[...]` (`mode="single_turn"`,
+  §8.1). Nessun tool diretto sul DB — solo routing/composizione, per tenere le
+  sue istruzioni brevi ed economiche dato che gira su ogni messaggio.
 - **Se manca**: nessun layer di routing pulito; ogni sub-agente dovrebbe fare
   la propria classificazione d'intento e gestione del tono, oppure si ricade
   in un agente monolitico (vanifica modularità e obiettivo di costo).
-- **Nota multimodale (verificata, non assunta)**: `AgentTool` ha una
-  limitazione nota nel forwarding di contenuti multimodali (immagini/audio)
-  verso il sub-agente —
-  [google/adk-python#729](https://github.com/google/adk-python/issues/729)
-  documenta che `transfer_to_agent` propaga correttamente i contenuti
-  multimodali mentre `AgentTool` no, perché argomenti/risultati dei tool sono
-  tipizzati come stringhe semplici, non `Part` grezze. Conseguenza per questo
-  design: **l'orchestratore deve fare lui il ragionamento visivo/audio** (è
-  l'agente root, vede il `Content` grezzo nativamente) e passare una
-  descrizione testuale estratta come argomento della tool call verso il
-  sub-agente di dominio — es. "foto di un menu, nome locale X, piatti: ..." →
-  `CatalogingAgent`. **Da verificare end-to-end con un'immagine reale prima di
-  fare affidamento su questo** (nulla in questo repo esercita ancora
-  `gemini_media.py`, vedi §9).
+- **Nota multimodale**: la limitazione nota di `AgentTool` classico nel
+  forwarding di contenuti multimodali (immagini/audio) —
+  [google/adk-python#729](https://github.com/google/adk-python/issues/729),
+  dovuta al fatto che `AgentTool` ricostruisce un `Content` testuale nuovo da
+  zero in una sessione usa-e-getta — non si applica allo stesso modo a
+  `mode="single_turn"`, che esegue il sub-agente **nella sessione del
+  genitore**. Non essendo però stato verificato nel dettaglio se il filtro
+  per "branch" di ADK lascia visibile al sub-agente l'evento multimodale
+  originale, l'istruzione dell'orchestratore chiede comunque, per robustezza,
+  di **descrivere sempre a testo il contenuto di un'immagine** nel campo
+  `request` passato al sub-agente delegato — non costa nulla e toglie ogni
+  dipendenza da questo dettaglio interno di ADK. **Da verificare end-to-end
+  con un'immagine reale prima di eliminare questa doppia cautela** (nulla in
+  questo repo esercita ancora `gemini_media.py`, vedi §9).
 
 ### 8.3 CatalogingAgent (item + categorie, include il recupero)
 
@@ -453,8 +459,8 @@ scrittura").
 | Tool | Perché esiste | Cosa manca senza |
 | --- | --- | --- |
 | `search_categories(query?)` | Dà all'LLM l'elenco categorie esistenti per inferire (es. "viaggi" esiste → un nome di luogo è probabilmente un viaggio) invece di indovinare alla cieca | L'agente inventa una categoria nuova ogni volta, viola esplicitamente la logica di inferenza richiesta dal committente |
-| `verify_place(name, location?)` | Verifica di realtà prima di auto-creare "ristoranti". Tool basato su **Protocol** `PlaceLookup`, impl. di default Google Maps Places API, swappabile a OSM Nominatim via config `PLACE_LOOKUP_PROVIDER` (stesso pattern Protocol già usato per `ObjectStorage`, §5) | Categoria inventata solo dalla conoscenza dell'LLM → rischio di allucinazione (un bar diventa "ristorante") senza alcuna verifica, esattamente ciò che il committente ha segnalato come necessario |
-| `find_similar_items(name, category?)` | Fuzzy match (`pg_trgm`) prima dell'insert — risolve il punto aperto "duplicati/aggiornamenti" (requirements §7.5) | Righe duplicate silenziose; "aggiorna il voto di X" diventa irraggiungibile perché nulla corrisponde mai a una riga esistente |
+| `verify_place(name, location_hint?)` | Verifica di realtà prima di auto-creare "ristoranti". Tool basato su **Protocol** `PlaceLookup` (`agents/tools/place_lookup.py`), impl. di default Google Maps Places API, swappabile a OSM Nominatim via config `PLACE_LOOKUP_PROVIDER` (stesso pattern Protocol già usato per `ObjectStorage`, §5) | Categoria inventata solo dalla conoscenza dell'LLM → rischio di allucinazione (un bar diventa "ristorante") senza alcuna verifica, esattamente ciò che il committente ha segnalato come necessario |
+| `find_similar_items(name, category?)` | Fuzzy match (`pg_trgm`, abilitato dalla migration `234761436f4d`) prima dell'insert — risolve il punto aperto "duplicati/aggiornamenti" (requirements §7.5). Su SQLite (test) fa fallback a un match per sottostringa — mai usato contro Postgres reale | Righe duplicate silenziose; "aggiorna il voto di X" diventa irraggiungibile perché nulla corrisponde mai a una riga esistente |
 | `save_item` / `update_item(category, name, notes?, rating?, attributes)` | Persistenza vera e propria; auto-crea la riga categoria se assente | Nulla viene salvato — nessuna catalogazione avviene |
 | `search_items(category?, name?, location?, free_text?)` | Percorso di lettura dedicato per domande in linguaggio naturale ("che ristoranti a Roma?") | Nessun percorso di recupero — il bot potrebbe scrivere ma mai rispondere a domande di recupero |
 | `fetch_link_metadata(url)` | Estrae og:title/description/image, **chiede conferma all'utente per default**; `Settings.link_auto_fetch=true` salta la conferma e scarica direttamente. Il branching vive nelle istruzioni dell'agente + un flag di settings letto dal tool, non un secondo tool | Link salvati come stringhe nude, nessun contesto film/ristorante/articolo estratto automaticamente |
@@ -466,9 +472,9 @@ scrittura").
   consumatore futuro diverso — lo scheduler proattivo (esplicitamente fuori
   scope per ora, vedi §10 punto 1) leggerà direttamente questa
   tabella/contratto tool, senza dipendere dagli interni della catalogazione.
-- **Tool**: `create_reminder(title, due_at, timezone?, recurrence_rule?,
-  linked_item_id?)`, `list_reminders(filters)`, `update_reminder`,
-  `cancel_reminder`.
+- **Tool**: `create_reminder(title, due_at, description?, reminder_timezone?,
+  recurrence_rule?, linked_item_id?)`, `list_reminders(status?,
+  upcoming_only)`, `update_reminder`, `cancel_reminder`.
 - **Esplicitamente escluso**: invio, budget-gating, dispatch dei template
   WhatsApp — da progettare dopo, servizio cron non-ADK separato.
 - **Se accorpato alla catalogazione**: ogni richiesta di catalogazione (salva
@@ -482,11 +488,12 @@ scrittura").
   spuntare vs voto/note) e forma di recupero diversa ("cosa manca nella lista
   della spesa?"). Liste della spesa e task riusano lo stesso schema generico
   `lists`/`list_items` (già deciso, §4.2), discriminato da `list_type`.
-- **Tool**: `create_list(list_type, name)`, `add_list_item(list_id,
-  description, attributes?)`, `check_item` / `uncheck_item`,
-  `remove_list_item`, `list_items(list_id | list_type)`. Campi specifici dei
-  task (priorità/scadenza/assegnatario) vivono in `attributes` — nessun tool
-  dedicato, stesso pattern di `items.attributes`.
+- **Tool**: `create_list(list_type, name)`, `find_lists(list_type?)` (evita
+  di ricreare una lista già esistente), `add_list_item(list_id, description,
+  attributes?)`, `check_list_item(list_item_id, checked)`,
+  `remove_list_item`, `list_items(list_id, include_checked)`. Campi
+  specifici dei task (priorità/scadenza/assegnatario) vivono in `attributes`
+  — nessun tool dedicato, stesso pattern di `items.attributes`.
 - **Se assente**: le richieste di spesa/task finiscono attaccate a un agente
   su un dominio non correlato, e ogni messaggio sulla lista della spesa
   trascinerebbe in contesto i tool di place-lookup/link-fetch della
@@ -497,12 +504,14 @@ scrittura").
 - **Auth/whitelist/budget-gating**: resta nel layer webhook/handler (già
   implementato), non tocca mai un agente — nessun ragionamento LLM serve per
   una lookup su DB.
-- **`@may_fail`/`@may_fail_async`** (già portati, oggi 0% di uso, vedi §9): da
-  applicare a ogni nuovo tool — primo caso d'uso reale per questo decoratore.
-- **Split modelli**: orchestratore su `gemini-2.0-flash` (routing + tono
-  italiano + ragionamento visivo è la parte delicata), i 3 agenti di dominio
-  su `gemini-2.0-flash-lite` (tool-calling strutturato su CRUD, compito
-  meccanico).
+- **`@may_fail_async`**: applicato a ogni tool DB-backed/di rete in
+  `agents/tools/` — primo uso reale di questo decoratore (prima portato da
+  dls-chatbot ma mai collegato a un tool vero, §9).
+- **Split modelli**: orchestratore su `Settings.gemini_model_orchestrator`
+  (default `gemini-3.1-flash`: routing + tono italiano + ragionamento visivo
+  è la parte delicata), i 3 agenti di dominio su
+  `Settings.gemini_model_subagent` (default `gemini-3.1-flash-lite`:
+  tool-calling strutturato su CRUD, compito meccanico).
 
 ## 9. Testing e coverage
 
@@ -549,13 +558,13 @@ codice ereditato da dls-chatbot non applicabile a questo progetto, vedi §2
 
 ## 10. Punti ancora aperti (da affrontare nelle prossime fasi)
 
-1. ~~Design degli agenti ADK per il dominio~~ — **fatto, vedi §8** (23/07/2026). Resta da fare: implementazione reale di orchestratore + 3 sub-agenti e tool, schemi Pydantic dei tool, verifica end-to-end del caveat multimodale `AgentTool` descritto in §8.2. **Fuori scope per ora** (deciso 23/07/2026): lo scheduler di invio proattivo dei promemoria con fallback su budget — resta un componente separato non-ADK da progettare a parte.
+1. ~~Design e implementazione degli agenti ADK per il dominio~~ — **fatto, vedi §8** (23/07/2026): orchestratore + 3 sub-agenti e tool implementati (`src/whatsapp_assistant/agents/`). Resta da fare: verifica end-to-end del caveat multimodale descritto in §8.2 con un'immagine reale, e test contro un Postgres reale del ramo `pg_trgm` di `find_similar_items` (oggi esercitato nei test solo sul fallback SQLite). **Fuori scope per ora** (deciso 23/07/2026): lo scheduler di invio proattivo dei promemoria con fallback su budget — resta un componente separato non-ADK da progettare a parte.
 2. Meccanismo di trigger per `reset_session` lato utente (keyword tipo "/reset" nel testo? comando esplicito? quick reply WhatsApp?) — implementato lato `ChatService`/CLI, non ancora deciso per il canale WhatsApp reale.
-3. Gestione dei link (requirements.md §7.7) — non ancora discusso.
+3. ~~Gestione dei link~~ — **fatto, vedi §8.3** (23/07/2026): tool `fetch_link_metadata`, con conferma utente di default (`Settings.link_auto_fetch` per saltarla).
 4. Requisiti di disponibilità/affidabilità (requirements.md §7.9) — §6 di questo documento copre "non perdere/duplicare messaggi", ma non definisce SLA/tempo massimo di risposta.
 5. Popolamento iniziale della tabella `users` (seed dei 2 numeri autorizzati) — da fare a mano o via comando/migrazione dati, non ancora deciso. Ora è un blocco funzionale reale (non solo dati mancanti): senza righe in `users`, `PhoneWhitelist` rifiuta ogni messaggio.
 6. Verifica end-to-end di `ADKChatService.send_async` con una API key Gemini reale (finora testata solo la gestione sessioni e il lock, non la chiamata al modello con credenziali vere).
-7. Indicizzazione GIN su `items.attributes`/`list_items.attributes`, estensioni `pg_trgm`/`pgvector` (§4.1) — nessuna delle tre è ancora nello schema.
+7. Indicizzazione GIN su `items.attributes`/`list_items.attributes`, estensione `pgvector` (§4.1) — `pg_trgm` + indice su `items.name` **abilitati** (migration `234761436f4d`, 23/07/2026), le altre due non ancora nello schema.
 8. Disallineamento fra la posizione reale dei segreti (`secrets/.env`) e quella attesa da `compose.yaml`/`pydantic-settings` (`.env` in root) — §4.3.
 9. `api/waha.py` montato incondizionatamente e senza autenticazione in `main.py` pur non essendo il canale attivo — da mettere dietro un flag di configurazione o rimuovere dal routing se resta inutilizzato a lungo.
 10. Nessun rate limiting né circuit breaker legato al budget mensile (requirements.md §6): la whitelist (§6.1) risolve "chi può parlare col bot", non "quanto può costare se i due utenti autorizzati lo usano molto".

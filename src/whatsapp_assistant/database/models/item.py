@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Numeric, String, Text, func
+from sqlalchemy import JSON, ForeignKey, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -28,7 +28,13 @@ class Item(Base):
     rating: Mapped[float | None] = mapped_column(Numeric(3, 1), nullable=True)
     # Free text location (e.g. city), useful for retrieval like "ristoranti a Roma".
     location: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    attributes: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # `with_variant`: JSONB on Postgres (production, GIN-indexable per
+    # docs/architecture.md §4.1), plain JSON on SQLite — same pattern already
+    # used for `InboundMessage.payload` to keep this table unit-testable
+    # against SQLite without a real Postgres.
+    attributes: Mapped[dict | None] = mapped_column(
+        JSONB().with_variant(JSON(), "sqlite"), nullable=True
+    )
     created_by: Mapped[int | None] = mapped_column(
         ForeignKey("users.id"), nullable=True
     )
