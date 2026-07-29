@@ -8,15 +8,20 @@
             "name": "Python Debugger: FastAPI",
             "type": "debugpy",
             "request": "launch",
-            "module": "fastapi",
+            "module": "whatsapp_assistant.main",
             "args": [
-                "dev",
-                "src/whatsapp_assistant/main.py",
+                "--webserver",
                 "--host",
                 "0.0.0.0",
                 "--port",
                 "8000",
+                "--reload"
             ],
+            "env": {
+                // compose.yaml publishes the db container on host port 5435
+                // (5432 is only reachable from other containers on the internal network).
+                "DATABASE_PORT": "5435"
+            },
             "jinja": true
         },
         {
@@ -31,7 +36,7 @@
                 "--port",
                 "8000",
                 "--session_service_uri",
-                "postgresql+asyncpg://wa_ass:dev-only-local-password@localhost:5432/agent_sessions"
+                "postgresql+asyncpg://wa_ass:dev-only-local-password@localhost:5435/agent_sessions"
             ],
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",

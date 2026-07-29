@@ -51,14 +51,14 @@ def create_app() -> FastAPI:
     return app
 
 
-def run_webserver(host: str, port: int) -> None:
+def run_webserver(host: str, port: int, reload: bool) -> None:
     import uvicorn
 
     uvicorn.run(
         "whatsapp_assistant.main:create_app",
         host=host,
         port=port,
-        reload=True,
+        reload=reload,
         factory=True,
     )
 
@@ -88,10 +88,19 @@ def main() -> None:
         default=DEFAULT_PORT,
         help=f"Port to bind the webserver to (default: {DEFAULT_PORT})",
     )
+    parser.add_argument(
+        "--reload",
+        action="store_true",
+        help="Enable auto-reload on code changes (dev only)",
+    )
     cli.add_arguments(parser)
     args = parser.parse_args()
 
     if args.cli:
         cli.run(args)
     elif args.webserver:
-        run_webserver(host=args.host, port=args.port)
+        run_webserver(host=args.host, port=args.port, reload=args.reload)
+
+
+if __name__ == "__main__":
+    main()
